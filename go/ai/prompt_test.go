@@ -3292,3 +3292,131 @@ Hello {{name}}, please help me with {{task}}.
 		}
 	})
 }
+
+type testMetadataMiddleware struct {
+	Foo string `json:"foo"`
+}
+
+func (m *testMetadataMiddleware) Name() string                            { return "test/middleware" }
+func (m *testMetadataMiddleware) New(ctx context.Context) (*Hooks, error) { return nil, nil }
+
+func TestPromptMetadata(t *testing.T) {
+	reg := registry.New()
+	toolA := testTool(reg, "toolA")
+
+	DefinePrompt(reg, "testPrompt",
+		WithTools(toolA),
+		WithToolChoice(ToolChoiceAuto),
+		WithUse(&testMetadataMiddleware{Foo: "bar"}),
+		WithPrompt("hello"),
+	)
+
+	action := reg.LookupAction("/executable-prompt/testPrompt")
+	if action == nil {
+		t.Fatal("Action not found")
+	}
+
+	metadata, ok := action.Desc().Metadata["prompt"].(map[string]any)
+	if !ok {
+		t.Fatal("Metadata not found")
+	}
+
+	if diff := cmp.Diff([]string{"toolA"}, metadata["tools"]); diff != "" {
+		t.Errorf("tools mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("auto", metadata["toolChoice"]); diff != "" {
+		t.Errorf("toolChoice mismatch (-want +got):\n%s", diff)
+	}
+
+	use, ok := metadata["use"].([]any)
+	if !ok {
+		t.Fatal("use metadata not found")
+	}
+
+	if len(use) != 1 {
+		t.Fatalf("use length = %d, want 1", len(use))
+	}
+
+	m, ok := use[0].(map[string]any)
+	if !ok {
+		t.Fatal("use[0] is not a map")
+	}
+
+	if m["name"] != "test/middleware" {
+		t.Errorf("middleware name = %v, want test/middleware", m["name"])
+	}
+
+	config, ok := m["config"].(map[string]any)
+	if !ok {
+		t.Fatal("middleware config not found")
+	}
+
+	if config["foo"] != "bar" {
+		t.Errorf("foo = %v, want bar", config["foo"])
+	}
+}
+
+func TestLoadPromptMetadata(t *testing.T) {
+	reg := registry.New()
+	source := `---
+model: echoModel
+tools: [toolA]
+toolChoice: auto
+use:
+  - name: myMiddleware
+    config:
+      foo: bar
+---
+hello`
+
+	_, err := LoadPromptFromSource(reg, source, "metadataTest", "test-ns")
+	if err != nil {
+		t.Fatalf("LoadPromptFromSource failed: %v", err)
+	}
+
+	action := reg.LookupAction("/executable-prompt/test-ns/metadataTest")
+	if action == nil {
+		t.Fatal("Action not found")
+	}
+
+	metadata, ok := action.Desc().Metadata["prompt"].(map[string]any)
+	if !ok {
+		t.Fatal("Metadata not found")
+	}
+
+	if diff := cmp.Diff([]string{"toolA"}, metadata["tools"]); diff != "" {
+		t.Errorf("tools mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("auto", metadata["toolChoice"]); diff != "" {
+		t.Errorf("toolChoice mismatch (-want +got):\n%s", diff)
+	}
+
+	use, ok := metadata["use"].([]any)
+	if !ok {
+		t.Fatal("use metadata not found")
+	}
+
+	if len(use) != 1 {
+		t.Fatalf("use length = %d, want 1", len(use))
+	}
+
+	m, ok := use[0].(map[string]any)
+	if !ok {
+		t.Fatal("use[0] is not a map")
+	}
+
+	if m["name"] != "myMiddleware" {
+		t.Errorf("middleware name = %v, want myMiddleware", m["name"])
+	}
+
+	config, ok := m["config"].(map[string]any)
+	if !ok {
+		t.Fatal("middleware config not found")
+	}
+
+	if config["foo"] != "bar" {
+		t.Errorf("foo = %v, want bar", config["foo"])
+	}
+}
